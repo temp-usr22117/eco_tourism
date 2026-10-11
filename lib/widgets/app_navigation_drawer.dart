@@ -3,6 +3,8 @@ import 'package:eco_tourism/screens/how_it_works_screen.dart';
 import 'package:eco_tourism/screens/my_activity_screen.dart';
 import 'package:eco_tourism/screens/plan_trek_screen.dart';
 
+import 'package:eco_tourism/services/trail_seed_service.dart';
+
 class AppNavigationDrawer extends StatelessWidget {
   const AppNavigationDrawer({super.key});
 
@@ -14,6 +16,62 @@ class AppNavigationDrawer extends StatelessWidget {
     Future.delayed(const Duration(milliseconds: 220), () {
       rootNavigator.push(MaterialPageRoute(builder: (_) => page));
     });
+  }
+
+  void _showSeedDialog(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: const Color(0xFF101827),
+        title: const Row(
+          children: [
+            Icon(Icons.terrain_rounded, color: Colors.greenAccent),
+            SizedBox(width: 8),
+            Text(
+              'Seed Curated Treks',
+              style: TextStyle(color: Colors.white, fontSize: 18),
+            ),
+          ],
+        ),
+        content: const Text(
+          'Load 8 iconic Indian treks (Triund, Kedarkantha, Hampta Pass, Kudremukh, Valley of Flowers, Har Ki Dun, Sandakphu, Chembra) and their safety tips into Firestore?',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(),
+            child: const Text('Cancel', style: TextStyle(color: Colors.white60)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.greenAccent,
+              foregroundColor: Colors.black,
+            ),
+            onPressed: () async {
+              Navigator.of(dialogCtx).pop();
+              final messenger = ScaffoldMessenger.of(context);
+              try {
+                final count = await TrailSeedService.seedCuratedTrails();
+                messenger.showSnackBar(
+                  SnackBar(
+                    backgroundColor: Colors.green,
+                    content: Text('Successfully seeded $count curated Indian treks!'),
+                  ),
+                );
+              } catch (e) {
+                messenger.showSnackBar(
+                  SnackBar(
+                    backgroundColor: Colors.redAccent,
+                    content: Text('Failed to seed trails: $e'),
+                  ),
+                );
+              }
+            },
+            child: const Text('Seed Now', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -65,6 +123,19 @@ class AppNavigationDrawer extends StatelessWidget {
               ),
               onTap: () {
                 _navigateFromDrawer(context, const HowItWorksScreen());
+              },
+            ),
+            const Divider(color: Colors.white24),
+            ListTile(
+              leading: const Icon(Icons.cloud_upload_outlined, color: Colors.greenAccent),
+              title: const Text('Seed Curated Treks', style: TextStyle(color: Colors.white)),
+              subtitle: const Text(
+                'Load iconic Indian trekking routes',
+                style: TextStyle(color: Colors.white60),
+              ),
+              onTap: () {
+                Navigator.of(context).pop();
+                _showSeedDialog(context);
               },
             ),
           ],
