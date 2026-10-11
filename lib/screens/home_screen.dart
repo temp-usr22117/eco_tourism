@@ -39,9 +39,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   List<dynamic> searchResults = [];
   bool isSearching = false;
 
+  static const LatLng _indiaCenter = LatLng(22.0, 78.9629);
+  static const double _indiaZoom = 4.2;
+
   Timer? debounce;
   String? _checkedInTrailId;
-  bool _hasCenteredMap = false;
   bool _isLocating = false;
   String _gpsStateLabel = 'GPS: Unknown';
 
@@ -249,7 +251,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  Future<bool> _getLocation() async {
+  Future<bool> _getLocation({bool moveMap = false}) async {
     if (mounted) {
       setState(() {
         _isLocating = true;
@@ -302,8 +304,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
 
       final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-        timeLimit: const Duration(seconds: 12),
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 12),
+        ),
       );
 
       if (!mounted) return false;
@@ -314,8 +318,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       });
 
       LocationStateService.setLastLocation(position.latitude, position.longitude);
-      mapController.move(currentLocation!, 13);
-      _hasCenteredMap = true;
+      if (moveMap) {
+        mapController.move(currentLocation!, 14);
+      }
       return true;
     } catch (_) {
       _restoreCachedLocation();
@@ -333,7 +338,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _onLocateMePressed() async {
-    final success = await _getLocation();
+    final success = await _getLocation(moveMap: true);
     if (!mounted) return;
 
     if (success && currentLocation != null) {
@@ -376,11 +381,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     setState(() {
       currentLocation = LatLng(cached.$1, cached.$2);
     });
-
-    if (!_hasCenteredMap) {
-      mapController.move(currentLocation!, 13);
-      _hasCenteredMap = true;
-    }
   }
 
   void _showLocationMessage(String message) {
@@ -405,8 +405,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             child: FlutterMap(
               mapController: mapController,
               options: MapOptions(
-                initialCenter: LatLng(32.2432, 77.1892),
-                initialZoom: 10,
+                initialCenter: _indiaCenter,
+                initialZoom: _indiaZoom,
                 onPositionChanged: (position, hasGesture) {
                   // Hide the bottom card while user is actively panning/zooming the map.
                   if (hasGesture && selectedTrail != null) {
@@ -511,30 +511,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     }
 
                     final docs = snapshot.data!.docs;
-
-                    print("📦 Total docs: ${docs.length}");
-
-                    for (var doc in docs) {
-                      print("🧾 Doc ID: ${doc.id}");
-                      print("📍 Data: ${doc.data()}");
-                    }
-
-                    if (!_hasCenteredMap && docs.isNotEmpty) {
-                      final first = docs.first.data();
-
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        mapController.move(
-                          LatLng(
-                            (first['lat'] as num).toDouble(),
-                            (first['lng'] as num).toDouble(),
-                          ),
-                          13,
-                        );
-                        _hasCenteredMap = true;
-                      });
-                    }
-
-                    print("Docs length: ${docs.length}");
 
                     return MarkerLayer(
                       markers: docs.where((doc) {

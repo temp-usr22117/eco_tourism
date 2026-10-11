@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:eco_tourism/services/weather_service.dart';
 import 'package:eco_tourism/screens/main_screen.dart';
 import 'package:eco_tourism/services/checkin_service.dart';
+import 'package:eco_tourism/services/trail_seed_service.dart';
 import 'package:eco_tourism/widgets/app_navigation_drawer.dart';
 import 'package:eco_tourism/widgets/custom_app_bar.dart';
 
@@ -23,6 +24,38 @@ class _TrekDetailsState extends State<TrekDetails> {
   final Set<String> _weatherLoading = {};
   Timer? _blinkTimer;
   bool _alertVisible = true;
+  bool _isSeeding = false;
+
+  Future<void> _seedCuratedTrails() async {
+    setState(() {
+      _isSeeding = true;
+    });
+
+    try {
+      final count = await TrailSeedService.seedCuratedTrails();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.green,
+          content: Text('Successfully loaded $count curated Indian treks!'),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.redAccent,
+          content: Text('Failed to seed trails: $e'),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSeeding = false;
+        });
+      }
+    }
+  }
 
   @override
   void initState() {
@@ -403,10 +436,82 @@ class _TrekDetailsState extends State<TrekDetails> {
 
           debugPrint('[TRAIL SCREEN] Stream docs received=${docs.length}');
           if (docs.isEmpty) {
-            return const Center(
-              child: Text(
-                'No trails found',
-                style: TextStyle(color: Colors.white),
+            return Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(22),
+                      decoration: BoxDecoration(
+                        color: Colors.greenAccent.withValues(alpha: 0.12),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Colors.greenAccent.withValues(alpha: 0.35),
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.terrain_rounded,
+                        color: Colors.greenAccent,
+                        size: 54,
+                      ),
+                    ),
+                    const SizedBox(height: 22),
+                    const Text(
+                      'No Trails Found',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    const Text(
+                      'Your trails database is currently empty. Seed verified iconic Indian trekking routes across Himachal, Uttarakhand, Karnataka, West Bengal, and Kerala.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 14,
+                        height: 1.5,
+                      ),
+                    ),
+                    const SizedBox(height: 28),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.greenAccent,
+                        foregroundColor: Colors.black,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 14,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      onPressed: _isSeeding ? null : _seedCuratedTrails,
+                      icon: _isSeeding
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.black,
+                              ),
+                            )
+                          : const Icon(Icons.cloud_upload_outlined),
+                      label: Text(
+                        _isSeeding
+                            ? 'Seeding Treks...'
+                            : 'Seed Curated Indian Treks',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             );
           }
