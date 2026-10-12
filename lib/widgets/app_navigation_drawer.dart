@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:eco_tourism/screens/how_it_works_screen.dart';
 import 'package:eco_tourism/screens/my_activity_screen.dart';
 import 'package:eco_tourism/screens/plan_trek_screen.dart';
+import 'package:eco_tourism/screens/add_trail_screen.dart';
 
 import 'package:eco_tourism/services/trail_seed_service.dart';
 
@@ -126,6 +127,17 @@ class AppNavigationDrawer extends StatelessWidget {
               },
             ),
             const Divider(color: Colors.white24),
+            ListTile(
+              leading: const Icon(Icons.add_location_alt_outlined, color: Colors.greenAccent),
+              title: const Text('Add New Trail', style: TextStyle(color: Colors.white)),
+              subtitle: const Text(
+                'Create and publish a new trek',
+                style: TextStyle(color: Colors.white60),
+              ),
+              onTap: () {
+                _navigateFromDrawer(context, const AddTrailScreen());
+              },
+            ),
             ListTile(
               leading: const Icon(Icons.cloud_upload_outlined, color: Colors.greenAccent),
               title: const Text('Seed Curated Treks', style: TextStyle(color: Colors.white)),

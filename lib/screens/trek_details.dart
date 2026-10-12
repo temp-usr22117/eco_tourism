@@ -7,6 +7,7 @@ import 'package:eco_tourism/services/weather_service.dart';
 import 'package:eco_tourism/screens/main_screen.dart';
 import 'package:eco_tourism/services/checkin_service.dart';
 import 'package:eco_tourism/services/trail_seed_service.dart';
+import 'package:eco_tourism/screens/add_trail_screen.dart';
 import 'package:eco_tourism/widgets/app_navigation_drawer.dart';
 import 'package:eco_tourism/widgets/custom_app_bar.dart';
 
@@ -400,6 +401,20 @@ class _TrekDetailsState extends State<TrekDetails> {
       appBar: CustomAppBar(
         title: 'TRAILS',
       ),
+      floatingActionButton: FloatingActionButton.extended(
+        backgroundColor: Colors.greenAccent,
+        foregroundColor: Colors.black,
+        icon: const Icon(Icons.add_location_alt_rounded),
+        label: const Text(
+          'Add Trail',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        onPressed: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const AddTrailScreen()),
+          );
+        },
+      ),
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: FirebaseFirestore.instance
             .collection('trails')
@@ -507,6 +522,39 @@ class _TrekDetailsState extends State<TrekDetails> {
                         style: const TextStyle(
                           fontWeight: FontWeight.bold,
                           fontSize: 15,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: const BorderSide(color: Colors.white24),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 12,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const AddTrailScreen(),
+                          ),
+                        );
+                      },
+                      icon: const Icon(
+                        Icons.add_location_alt_outlined,
+                        color: Colors.greenAccent,
+                        size: 18,
+                      ),
+                      label: const Text(
+                        'Add Custom Trail',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
                         ),
                       ),
                     ),
