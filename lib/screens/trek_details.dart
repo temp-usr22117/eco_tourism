@@ -26,6 +26,9 @@ class _TrekDetailsState extends State<TrekDetails> {
   Timer? _blinkTimer;
   bool _alertVisible = true;
   bool _isSeeding = false;
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+  String _selectedDifficultyFilter = 'ALL';
 
   Future<void> _seedCuratedTrails() async {
     setState(() {
@@ -74,6 +77,7 @@ class _TrekDetailsState extends State<TrekDetails> {
   @override
   void dispose() {
     _blinkTimer?.cancel();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -443,134 +447,52 @@ class _TrekDetailsState extends State<TrekDetails> {
             return const Center(child: CircularProgressIndicator());
           }
 
-          final docs = [...snapshot.data!.docs]
+          final allDocs = snapshot.data!.docs;
+
+          debugPrint('[TRAIL SCREEN] Stream docs received=${allDocs.length}');
+          if (allDocs.isEmpty) {
+            return _buildEmptyDatabaseView();
+          }
+
+          final filteredDocs = allDocs.where((doc) {
+            final data = doc.data();
+            final name = (data['name'] ?? '').toString().toLowerCase();
+            final about = (data['aboutTrail'] ?? '').toString().toLowerCase();
+            final baseStatus = (data['baseStatus'] ?? 'SAFE').toString().toUpperCase();
+
+            final matchesSearch = _searchQuery.isEmpty ||
+                name.contains(_searchQuery.toLowerCase()) ||
+                about.contains(_searchQuery.toLowerCase());
+
+            bool matchesDifficulty = true;
+            if (_selectedDifficultyFilter == 'EASY') {
+              matchesDifficulty = baseStatus == 'EASY';
+            } else if (_selectedDifficultyFilter == 'MODERATE') {
+              matchesDifficulty = baseStatus == 'MODERATE';
+            } else if (_selectedDifficultyFilter == 'HARD') {
+              matchesDifficulty = baseStatus == 'HARD' || baseStatus == 'EXTREME';
+            }
+
+            return matchesSearch && matchesDifficulty;
+          }).toList()
             ..sort(
               (a, b) => _toCheckInCount(b.data()['checkInCount'])
                   .compareTo(_toCheckInCount(a.data()['checkInCount'])),
             );
 
-          debugPrint('[TRAIL SCREEN] Stream docs received=${docs.length}');
-          if (docs.isEmpty) {
-            return Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(22),
-                      decoration: BoxDecoration(
-                        color: Colors.greenAccent.withValues(alpha: 0.12),
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: Colors.greenAccent.withValues(alpha: 0.35),
-                        ),
-                      ),
-                      child: const Icon(
-                        Icons.terrain_rounded,
-                        color: Colors.greenAccent,
-                        size: 54,
-                      ),
-                    ),
-                    const SizedBox(height: 22),
-                    const Text(
-                      'No Trails Found',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    const Text(
-                      'Your trails database is currently empty. Seed verified iconic Indian trekking routes across Himachal, Uttarakhand, Karnataka, West Bengal, and Kerala.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Colors.white70,
-                        fontSize: 14,
-                        height: 1.5,
-                      ),
-                    ),
-                    const SizedBox(height: 28),
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.greenAccent,
-                        foregroundColor: Colors.black,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 24,
-                          vertical: 14,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                      onPressed: _isSeeding ? null : _seedCuratedTrails,
-                      icon: _isSeeding
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.black,
-                              ),
-                            )
-                          : const Icon(Icons.cloud_upload_outlined),
-                      label: Text(
-                        _isSeeding
-                            ? 'Seeding Treks...'
-                            : 'Seed Curated Indian Treks',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.white,
-                        side: const BorderSide(color: Colors.white24),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 12,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                      onPressed: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => const AddTrailScreen(),
-                          ),
-                        );
-                      },
-                      icon: const Icon(
-                        Icons.add_location_alt_outlined,
-                        color: Colors.greenAccent,
-                        size: 18,
-                      ),
-                      label: const Text(
-                        'Add Custom Trail',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }
-
-          return ListView.builder(
-            physics: const ClampingScrollPhysics(),
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            itemCount: docs.length,
-            itemBuilder: (context, index) {
-              final doc = docs[index];
-              final data = doc.data();
+          return Column(
+            children: [
+              _buildSearchAndFilterHeader(allDocs),
+              Expanded(
+                child: filteredDocs.isEmpty
+                    ? _buildNoSearchResultsView()
+                    : ListView.builder(
+                        physics: const ClampingScrollPhysics(),
+                        padding: const EdgeInsets.only(top: 4, bottom: 84),
+                        itemCount: filteredDocs.length,
+                        itemBuilder: (context, index) {
+                          final doc = filteredDocs[index];
+                          final data = doc.data();
               final name = (data['name'] ?? 'Unnamed Trail').toString();
               final baseStatus = (data['baseStatus'] ?? 'SAFE').toString();
               final checkInCountValue = _toCheckInCount(data['checkInCount']);
@@ -934,8 +856,298 @@ class _TrekDetailsState extends State<TrekDetails> {
                 ),
               );
             },
-          );
-        },
+          ),
+        ),
+      ],
+    );
+  },
+),
+);
+}
+
+  Widget _buildSearchAndFilterHeader(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> allDocs,
+  ) {
+    int easyCount = 0;
+    int moderateCount = 0;
+    int hardCount = 0;
+
+    for (final doc in allDocs) {
+      final status = (doc.data()['baseStatus'] ?? '').toString().toUpperCase();
+      if (status == 'EASY') easyCount++;
+      if (status == 'MODERATE') moderateCount++;
+      if (status == 'HARD' || status == 'EXTREME') hardCount++;
+    }
+
+    final filters = [
+      {'key': 'ALL', 'label': 'All (${allDocs.length})', 'color': Colors.greenAccent},
+      {'key': 'EASY', 'label': 'Easy ($easyCount)', 'color': Colors.greenAccent},
+      {'key': 'MODERATE', 'label': 'Moderate ($moderateCount)', 'color': Colors.amber},
+      {'key': 'HARD', 'label': 'Hard ($hardCount)', 'color': Colors.orangeAccent},
+    ];
+
+    return Container(
+      color: Colors.black,
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            height: 44,
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            decoration: BoxDecoration(
+              color: const Color(0xFF101827),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(
+                color: _searchQuery.isNotEmpty ? Colors.greenAccent : Colors.white12,
+              ),
+            ),
+            child: TextField(
+              controller: _searchController,
+              style: const TextStyle(color: Colors.white, fontSize: 13),
+              onChanged: (val) {
+                setState(() {
+                  _searchQuery = val.trim();
+                });
+              },
+              decoration: InputDecoration(
+                icon: const Icon(Icons.search, color: Colors.greenAccent, size: 20),
+                hintText: 'Search trails, states, peaks (e.g. Triund)...',
+                hintStyle: const TextStyle(color: Colors.white38, fontSize: 13),
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(vertical: 11),
+                suffixIcon: _searchQuery.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.close, color: Colors.white60, size: 18),
+                        onPressed: () {
+                          _searchController.clear();
+                          setState(() {
+                            _searchQuery = '';
+                          });
+                        },
+                      )
+                    : null,
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: filters.map((f) {
+                final isSelected = _selectedDifficultyFilter == f['key'];
+                final color = f['color'] as Color;
+
+                return GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _selectedDifficultyFilter = f['key'] as String;
+                    });
+                  },
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    margin: const EdgeInsets.only(right: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? color.withValues(alpha: 0.18)
+                          : const Color(0xFF101827),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
+                        color: isSelected ? color : Colors.white12,
+                        width: isSelected ? 1.5 : 1,
+                      ),
+                    ),
+                    child: Text(
+                      f['label'] as String,
+                      style: TextStyle(
+                        color: isSelected ? color : Colors.white70,
+                        fontSize: 12,
+                        fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNoSearchResultsView() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(18),
+              decoration: const BoxDecoration(
+                color: Colors.white10,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.search_off_rounded,
+                color: Colors.white54,
+                size: 44,
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'No Matching Treks',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _searchQuery.isNotEmpty
+                  ? 'No trails found matching "$_searchQuery" with $_selectedDifficultyFilter difficulty.'
+                  : 'No trails found in the $_selectedDifficultyFilter difficulty category.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white54, fontSize: 13, height: 1.4),
+            ),
+            const SizedBox(height: 18),
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Colors.greenAccent),
+                foregroundColor: Colors.greenAccent,
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+              onPressed: () {
+                _searchController.clear();
+                setState(() {
+                  _searchQuery = '';
+                  _selectedDifficultyFilter = 'ALL';
+                });
+              },
+              icon: const Icon(Icons.refresh, size: 16),
+              label: const Text('Reset Search & Filters'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyDatabaseView() {
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(22),
+              decoration: BoxDecoration(
+                color: Colors.greenAccent.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: Colors.greenAccent.withValues(alpha: 0.35),
+                ),
+              ),
+              child: const Icon(
+                Icons.terrain_rounded,
+                color: Colors.greenAccent,
+                size: 54,
+              ),
+            ),
+            const SizedBox(height: 22),
+            const Text(
+              'No Trails Found',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 22,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'Your trails database is currently empty. Seed verified iconic Indian trekking routes across Himachal, Uttarakhand, Karnataka, West Bengal, and Kerala.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 14,
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 28),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.greenAccent,
+                foregroundColor: Colors.black,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 14,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+              onPressed: _isSeeding ? null : _seedCuratedTrails,
+              icon: _isSeeding
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.black,
+                      ),
+                    )
+                  : const Icon(Icons.cloud_upload_outlined),
+              label: Text(
+                _isSeeding
+                    ? 'Seeding Treks...'
+                    : 'Seed Curated Indian Treks',
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.white,
+                side: const BorderSide(color: Colors.white24),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 12,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const AddTrailScreen(),
+                  ),
+                );
+              },
+              icon: const Icon(
+                Icons.add_location_alt_outlined,
+                color: Colors.greenAccent,
+                size: 18,
+              ),
+              label: const Text(
+                'Add Custom Trail',
+                style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
