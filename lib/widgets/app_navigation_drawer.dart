@@ -101,7 +101,18 @@ class AppNavigationDrawer extends StatelessWidget {
                 style: TextStyle(color: Colors.white60),
               ),
               onTap: () {
-                _navigateFromDrawer(context, const MyActivityScreen());
+                _navigateFromDrawer(context, const MyActivityScreen(initialTab: 0));
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.favorite_rounded, color: Colors.pinkAccent),
+              title: const Text('Wishlist / Saved Treks', style: TextStyle(color: Colors.white)),
+              subtitle: const Text(
+                'Saved bucket list trails',
+                style: TextStyle(color: Colors.white60),
+              ),
+              onTap: () {
+                _navigateFromDrawer(context, const MyActivityScreen(initialTab: 1));
               },
             ),
             ListTile(

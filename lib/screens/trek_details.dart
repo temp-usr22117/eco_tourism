@@ -7,12 +7,18 @@ import 'package:eco_tourism/services/weather_service.dart';
 import 'package:eco_tourism/screens/main_screen.dart';
 import 'package:eco_tourism/services/checkin_service.dart';
 import 'package:eco_tourism/services/trail_seed_service.dart';
+import 'package:eco_tourism/services/bookmark_service.dart';
 import 'package:eco_tourism/screens/add_trail_screen.dart';
 import 'package:eco_tourism/widgets/app_navigation_drawer.dart';
 import 'package:eco_tourism/widgets/custom_app_bar.dart';
 
 class TrekDetails extends StatefulWidget {
-  const TrekDetails({super.key});
+  final bool initialShowSavedOnly;
+
+  const TrekDetails({
+    super.key,
+    this.initialShowSavedOnly = false,
+  });
 
   @override
   State<TrekDetails> createState() => _TrekDetailsState();
@@ -29,6 +35,8 @@ class _TrekDetailsState extends State<TrekDetails> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   String _selectedDifficultyFilter = 'ALL';
+  bool _showSavedOnly = false;
+  Set<String> _bookmarkedIds = {};
 
   Future<void> _seedCuratedTrails() async {
     setState(() {
@@ -64,8 +72,11 @@ class _TrekDetailsState extends State<TrekDetails> {
   @override
   void initState() {
     super.initState();
+    _showSavedOnly = widget.initialShowSavedOnly;
     _logSingleFetchStatus();
     _loadCheckedInTrailId();
+    _loadBookmarkedIds();
+    BookmarkService.bookmarkedIdsNotifier.addListener(_onBookmarksChanged);
     _blinkTimer = Timer.periodic(const Duration(milliseconds: 650), (_) {
       if (!mounted) return;
       setState(() {
@@ -78,7 +89,23 @@ class _TrekDetailsState extends State<TrekDetails> {
   void dispose() {
     _blinkTimer?.cancel();
     _searchController.dispose();
+    BookmarkService.bookmarkedIdsNotifier.removeListener(_onBookmarksChanged);
     super.dispose();
+  }
+
+  void _onBookmarksChanged() {
+    if (!mounted) return;
+    setState(() {
+      _bookmarkedIds = BookmarkService.bookmarkedIdsNotifier.value;
+    });
+  }
+
+  Future<void> _loadBookmarkedIds() async {
+    final ids = await BookmarkService.getBookmarkedIds();
+    if (!mounted) return;
+    setState(() {
+      _bookmarkedIds = ids;
+    });
   }
 
   Future<void> _loadCheckedInTrailId() async {
@@ -473,7 +500,9 @@ class _TrekDetailsState extends State<TrekDetails> {
               matchesDifficulty = baseStatus == 'HARD' || baseStatus == 'EXTREME';
             }
 
-            return matchesSearch && matchesDifficulty;
+            final matchesSaved = !_showSavedOnly || _bookmarkedIds.contains(doc.id);
+
+            return matchesSearch && matchesDifficulty && matchesSaved;
           }).toList()
             ..sort(
               (a, b) => _toCheckInCount(b.data()['checkInCount'])
@@ -516,6 +545,7 @@ class _TrekDetailsState extends State<TrekDetails> {
               final isCheckLocked =
                   _checkedInTrailId != null && _checkedInTrailId != doc.id;
               final showAlert = _hasSevereWeather(weather);
+              final isBookmarked = _bookmarkedIds.contains(doc.id);
 
               String weatherText = '--';
               if (weatherLoading) {
@@ -578,6 +608,65 @@ class _TrekDetailsState extends State<TrekDetails> {
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
+                          ),
+                          const SizedBox(width: 4),
+                          IconButton(
+                            icon: Icon(
+                              isBookmarked
+                                  ? Icons.favorite_rounded
+                                  : Icons.favorite_border_rounded,
+                              color: isBookmarked ? Colors.pinkAccent : Colors.white54,
+                              size: 22,
+                            ),
+                            tooltip: isBookmarked ? 'Saved to Wishlist' : 'Add to Wishlist',
+                            visualDensity: VisualDensity.compact,
+                            splashRadius: 20,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                            onPressed: () async {
+                              final isAdded = await BookmarkService.toggleBookmark(
+                                trailId: doc.id,
+                                trailData: {
+                                  'id': doc.id,
+                                  'name': name,
+                                  'baseStatus': baseStatus,
+                                  'checkInCount': checkInCountValue,
+                                  'lat': lat,
+                                  'lng': lng,
+                                  'aboutTrail': aboutTrail,
+                                  'trailBg': trailBg,
+                                },
+                              );
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  duration: const Duration(milliseconds: 1500),
+                                  behavior: SnackBarBehavior.floating,
+                                  backgroundColor: const Color(0xFF1E293B),
+                                  content: Row(
+                                    children: [
+                                      Icon(
+                                        isAdded
+                                            ? Icons.favorite_rounded
+                                            : Icons.favorite_border_rounded,
+                                        color: isAdded ? Colors.pinkAccent : Colors.white60,
+                                        size: 18,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          isAdded
+                                              ? 'Added "$name" to Wishlist!'
+                                              : 'Removed "$name" from Wishlist',
+                                          style: const TextStyle(color: Colors.white),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
                           ),
                         ],
                       ),
@@ -879,6 +968,9 @@ class _TrekDetailsState extends State<TrekDetails> {
       if (status == 'HARD' || status == 'EXTREME') hardCount++;
     }
 
+    final savedCount =
+        allDocs.where((d) => _bookmarkedIds.contains(d.id)).length;
+
     final filters = [
       {'key': 'ALL', 'label': 'All (${allDocs.length})', 'color': Colors.greenAccent},
       {'key': 'EASY', 'label': 'Easy ($easyCount)', 'color': Colors.greenAccent},
@@ -934,41 +1026,87 @@ class _TrekDetailsState extends State<TrekDetails> {
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Row(
-              children: filters.map((f) {
-                final isSelected = _selectedDifficultyFilter == f['key'];
-                final color = f['color'] as Color;
-
-                return GestureDetector(
+              children: [
+                GestureDetector(
                   onTap: () {
                     setState(() {
-                      _selectedDifficultyFilter = f['key'] as String;
+                      _showSavedOnly = !_showSavedOnly;
                     });
                   },
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 180),
                     margin: const EdgeInsets.only(right: 8),
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
                     decoration: BoxDecoration(
-                      color: isSelected
-                          ? color.withValues(alpha: 0.18)
+                      color: _showSavedOnly
+                          ? Colors.pinkAccent.withValues(alpha: 0.22)
                           : const Color(0xFF101827),
                       borderRadius: BorderRadius.circular(20),
                       border: Border.all(
-                        color: isSelected ? color : Colors.white12,
-                        width: isSelected ? 1.5 : 1,
+                        color: _showSavedOnly ? Colors.pinkAccent : Colors.white12,
+                        width: _showSavedOnly ? 1.5 : 1,
                       ),
                     ),
-                    child: Text(
-                      f['label'] as String,
-                      style: TextStyle(
-                        color: isSelected ? color : Colors.white70,
-                        fontSize: 12,
-                        fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-                      ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _showSavedOnly
+                              ? Icons.favorite_rounded
+                              : Icons.favorite_border_rounded,
+                          size: 14,
+                          color: _showSavedOnly ? Colors.pinkAccent : Colors.white70,
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          'Saved ($savedCount)',
+                          style: TextStyle(
+                            color: _showSavedOnly ? Colors.pinkAccent : Colors.white70,
+                            fontSize: 12,
+                            fontWeight:
+                                _showSavedOnly ? FontWeight.bold : FontWeight.w500,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                );
-              }).toList(),
+                ),
+                ...filters.map((f) {
+                  final isSelected = _selectedDifficultyFilter == f['key'];
+                  final color = f['color'] as Color;
+
+                  return GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _selectedDifficultyFilter = f['key'] as String;
+                      });
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      margin: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: isSelected
+                            ? color.withValues(alpha: 0.18)
+                            : const Color(0xFF101827),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                          color: isSelected ? color : Colors.white12,
+                          width: isSelected ? 1.5 : 1,
+                        ),
+                      ),
+                      child: Text(
+                        f['label'] as String,
+                        style: TextStyle(
+                          color: isSelected ? color : Colors.white70,
+                          fontSize: 12,
+                          fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+              ],
             ),
           ),
         ],
@@ -977,6 +1115,8 @@ class _TrekDetailsState extends State<TrekDetails> {
   }
 
   Widget _buildNoSearchResultsView() {
+    final isWishlistEmpty = _showSavedOnly && _bookmarkedIds.isEmpty;
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -985,20 +1125,24 @@ class _TrekDetailsState extends State<TrekDetails> {
           children: [
             Container(
               padding: const EdgeInsets.all(18),
-              decoration: const BoxDecoration(
-                color: Colors.white10,
+              decoration: BoxDecoration(
+                color: isWishlistEmpty
+                    ? Colors.pinkAccent.withValues(alpha: 0.15)
+                    : Colors.white10,
                 shape: BoxShape.circle,
               ),
-              child: const Icon(
-                Icons.search_off_rounded,
-                color: Colors.white54,
+              child: Icon(
+                isWishlistEmpty
+                    ? Icons.favorite_border_rounded
+                    : Icons.search_off_rounded,
+                color: isWishlistEmpty ? Colors.pinkAccent : Colors.white54,
                 size: 44,
               ),
             ),
             const SizedBox(height: 16),
-            const Text(
-              'No Matching Treks',
-              style: TextStyle(
+            Text(
+              isWishlistEmpty ? 'Your Wishlist is Empty' : 'No Matching Treks',
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
@@ -1006,17 +1150,23 @@ class _TrekDetailsState extends State<TrekDetails> {
             ),
             const SizedBox(height: 6),
             Text(
-              _searchQuery.isNotEmpty
-                  ? 'No trails found matching "$_searchQuery" with $_selectedDifficultyFilter difficulty.'
-                  : 'No trails found in the $_selectedDifficultyFilter difficulty category.',
+              isWishlistEmpty
+                  ? 'Tap the heart icon on any trail card to save it to your wishlist and plan your adventure.'
+                  : _showSavedOnly
+                      ? 'No saved treks match your search or difficulty filter.'
+                      : _searchQuery.isNotEmpty
+                          ? 'No trails found matching "$_searchQuery" with $_selectedDifficultyFilter difficulty.'
+                          : 'No trails found in the $_selectedDifficultyFilter difficulty category.',
               textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.white54, fontSize: 13, height: 1.4),
             ),
             const SizedBox(height: 18),
             OutlinedButton.icon(
               style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: Colors.greenAccent),
-                foregroundColor: Colors.greenAccent,
+                side: BorderSide(
+                  color: isWishlistEmpty ? Colors.pinkAccent : Colors.greenAccent,
+                ),
+                foregroundColor: isWishlistEmpty ? Colors.pinkAccent : Colors.greenAccent,
                 padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
@@ -1027,10 +1177,11 @@ class _TrekDetailsState extends State<TrekDetails> {
                 setState(() {
                   _searchQuery = '';
                   _selectedDifficultyFilter = 'ALL';
+                  _showSavedOnly = false;
                 });
               },
-              icon: const Icon(Icons.refresh, size: 16),
-              label: const Text('Reset Search & Filters'),
+              icon: Icon(isWishlistEmpty ? Icons.explore : Icons.refresh, size: 16),
+              label: Text(isWishlistEmpty ? 'Explore All Treks' : 'Reset Search & Filters'),
             ),
           ],
         ),
