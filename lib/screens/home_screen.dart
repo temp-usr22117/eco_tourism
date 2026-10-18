@@ -9,6 +9,7 @@ import 'package:eco_tourism/services/route_service.dart';
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:eco_tourism/services/checkin_service.dart';
+import 'package:eco_tourism/services/bookmark_service.dart';
 import 'package:eco_tourism/widgets/app_navigation_drawer.dart';
 import 'package:eco_tourism/services/location_state_service.dart';
 
@@ -191,6 +192,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _getLocation();
     _loadCheckedInTrailId();
+    BookmarkService.getBookmarkedIds();
   }
 
   @override
@@ -879,14 +881,60 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
 
-                        /// Trail Name
-                        Text(
-                          locationName.isNotEmpty ? locationName : "Loading...",
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
+                        /// Trail Name & Wishlist
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                locationName.isNotEmpty ? locationName : "Loading...",
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            if (selectedTrailId != null && selectedTrailId.isNotEmpty)
+                              ValueListenableBuilder<Set<String>>(
+                                valueListenable: BookmarkService.bookmarkedIdsNotifier,
+                                builder: (context, bookmarkedIds, _) {
+                                  final isSaved = bookmarkedIds.contains(selectedTrailId);
+                                  return IconButton(
+                                    icon: Icon(
+                                      isSaved
+                                          ? Icons.favorite_rounded
+                                          : Icons.favorite_border_rounded,
+                                      color: isSaved ? Colors.pinkAccent : Colors.white60,
+                                      size: 22,
+                                    ),
+                                    tooltip: isSaved ? 'Saved in Wishlist' : 'Save to Wishlist',
+                                    visualDensity: VisualDensity.compact,
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                                    onPressed: () async {
+                                      final isAdded = await BookmarkService.toggleBookmark(
+                                        trailId: selectedTrailId,
+                                        trailData: selectedTrail,
+                                      );
+                                      if (!context.mounted) return;
+                                      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          duration: const Duration(milliseconds: 1400),
+                                          behavior: SnackBarBehavior.floating,
+                                          backgroundColor: const Color(0xFF1E293B),
+                                          content: Text(
+                                            isAdded
+                                                ? 'Saved "$locationName" to Wishlist!'
+                                                : 'Removed "$locationName" from Wishlist',
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  );
+                                },
+                              ),
+                          ],
                         ),
 
                         const SizedBox(height: 6),
