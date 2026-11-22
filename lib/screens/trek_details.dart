@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:eco_tourism/services/weather_service.dart';
+import 'package:eco_tourism/services/safety_service.dart';
+import 'package:eco_tourism/widgets/safety_badge.dart';
 import 'package:eco_tourism/screens/main_screen.dart';
 import 'package:eco_tourism/services/checkin_service.dart';
 import 'package:eco_tourism/services/trail_seed_service.dart';
@@ -27,7 +29,7 @@ class TrekDetails extends StatefulWidget {
 class _TrekDetailsState extends State<TrekDetails> {
   String? _expandedTrailId;
   String? _checkedInTrailId;
-  final Map<String, Map<String, dynamic>?> _weatherByTrailId = {};
+  final Map<String, TrailWeather?> _weatherByTrailId = {};
   final Set<String> _weatherLoading = {};
   Timer? _blinkTimer;
   bool _alertVisible = true;
@@ -128,7 +130,7 @@ class _TrekDetailsState extends State<TrekDetails> {
     _weatherLoading.add(trailId);
 
     try {
-      final weather = await WeatherService().getWeather(lat, lng);
+      final weather = await WeatherService().getTrailWeather(lat, lng);
       if (!mounted) return;
       setState(() {
         _weatherByTrailId[trailId] = weather;
@@ -173,117 +175,23 @@ class _TrekDetailsState extends State<TrekDetails> {
     return double.tryParse(value.toString());
   }
 
-  String _safetyFromWeather(String baseStatus, Map<String, dynamic>? weather) {
-    if (weather == null) {
-      final normalized = baseStatus.toUpperCase();
-      return normalized == 'CAUTION' ? 'RISKY' : normalized;
-    }
-
-    final weatherList = weather['weather'];
-    if (weatherList is List && weatherList.isNotEmpty) {
-      final condition = (weatherList.first['main'] ?? '').toString();
-
-      if (condition == 'Rain' ||
-          condition == 'Thunderstorm' ||
-          condition == 'Snow') {
-        return 'DANGER';
-      }
-
-      if (condition == 'Clouds' ||
-          condition == 'Mist' ||
-          condition == 'Fog' ||
-          condition == 'Haze') {
-        return 'RISKY';
-      }
-
-      return 'SAFE';
-    }
-
-    final normalized = baseStatus.toUpperCase();
-    return normalized == 'CAUTION' ? 'RISKY' : normalized;
+  String _conditionLabel(TrailWeather? weather) {
+    final condition = weather?.condition ?? '';
+    return condition.isEmpty ? '--' : condition;
   }
 
-  Color _statusColor(String status) {
-    if (status == 'DANGER') return Colors.redAccent;
-    if (status == 'RISKY') return Colors.amber;
-    return Colors.greenAccent;
+  String _temperatureLabel(TrailWeather? weather) {
+    final temp = weather?.temperatureC;
+    return temp == null ? '--' : '${temp.toStringAsFixed(1)}°C';
   }
 
-  String _conditionLabel(Map<String, dynamic>? weather) {
-    if (weather == null) return '--';
-    final weatherList = weather['weather'];
-    if (weatherList is List && weatherList.isNotEmpty) {
-      return (weatherList.first['main'] ?? '--').toString();
-    }
-    return '--';
+  String _rainChanceLabel(TrailWeather? weather) {
+    final chance = weather?.precipChancePercent;
+    return chance == null ? '--' : '$chance%';
   }
 
-  String _temperatureLabel(Map<String, dynamic>? weather) {
-    if (weather == null) return '--';
-    final main = weather['main'];
-    if (main is Map && main['temp'] != null) {
-      return '${main['temp']}°C';
-    }
-    return '--';
-  }
-
-  int _rainPercentValue(Map<String, dynamic>? weather) {
-    if (weather == null) return 0;
-
-    final rain = weather['rain'];
-    if (rain is Map && rain['1h'] != null) {
-      final mm = _toDouble(rain['1h']) ?? 0;
-      return (mm * 20).clamp(0, 100).round();
-    }
-
-    final weatherList = weather['weather'];
-    if (weatherList is List && weatherList.isNotEmpty) {
-      final condition = (weatherList.first['main'] ?? '').toString();
-      if (condition == 'Thunderstorm') return 90;
-      if (condition == 'Rain') return 70;
-      if (condition == 'Drizzle') return 40;
-      if (condition == 'Snow') return 75;
-    }
-
-    final clouds = weather['clouds'];
-    if (clouds is Map && clouds['all'] != null) {
-      final cloudPercent = _toDouble(clouds['all']) ?? 0;
-      return cloudPercent.round().clamp(0, 100);
-    }
-
-    return 0;
-  }
-
-  bool _hasSevereWeather(Map<String, dynamic>? weather) {
-    if (weather == null) return false;
-    final temp = _toDouble((weather['main'] as Map?)?['temp']);
-    final rainPercent = _rainPercentValue(weather);
-
-    final veryLowTemp = temp != null && temp < 0;
-    final heavyRain = rainPercent > 60;
-    return veryLowTemp || heavyRain;
-  }
-
-  String _alertReason(Map<String, dynamic>? weather) {
-    if (weather == null) return 'Unsafe weather conditions';
-
-    final temp = _toDouble((weather['main'] as Map?)?['temp']);
-    final rainPercent = _rainPercentValue(weather);
-
-    if (temp != null && temp < 0 && rainPercent > 60) {
-      return 'Temp below 0°C and rain $rainPercent%';
-    }
-    if (temp != null && temp < 0) {
-      return 'Temperature dropped below 0°C';
-    }
-    if (rainPercent > 60) {
-      return 'Heavy rain expected ($rainPercent%)';
-    }
-    return 'Unsafe weather conditions';
-  }
-
-  IconData _conditionIcon(Map<String, dynamic>? weather) {
-    final condition = _conditionLabel(weather);
+  IconData _conditionIcon(TrailWeather? weather) {
+    final condition = weather?.condition ?? '';
     if (condition == 'Rain' || condition == 'Drizzle') {
       return Icons.water_drop;
     }
@@ -538,20 +446,24 @@ class _TrekDetailsState extends State<TrekDetails> {
 
               final weather = _weatherByTrailId[doc.id];
               final weatherLoading = _weatherLoading.contains(doc.id);
-              final status = _safetyFromWeather(baseStatus, weather);
-              final statusColor = _statusColor(status);
+              final safety = SafetyService.assess(weather);
               final isExpanded = _expandedTrailId == doc.id;
               final isCheckedByThisDevice = _checkedInTrailId == doc.id;
               final isCheckLocked =
                   _checkedInTrailId != null && _checkedInTrailId != doc.id;
-              final showAlert = _hasSevereWeather(weather);
+              // Banner for anything worse than SAFE once weather has loaded;
+              // only DANGER blinks.
+              final showAlert = weather != null &&
+                  (safety.level == SafetyLevel.danger ||
+                      safety.level == SafetyLevel.risky);
               final isBookmarked = _bookmarkedIds.contains(doc.id);
 
               String weatherText = '--';
               if (weatherLoading) {
                 weatherText = 'Loading weather...';
-              } else if (weather != null && weather['main'] is Map) {
-                weatherText = '${(weather['main']['temp'] ?? '--')}°C  |  Rain ${_rainPercentValue(weather)}%';
+              } else if (weather != null) {
+                weatherText =
+                    '${_temperatureLabel(weather)}  |  Rain ${_rainChanceLabel(weather)}';
               }
 
               return GestureDetector(
@@ -594,21 +506,7 @@ class _TrekDetailsState extends State<TrekDetails> {
                               ),
                             ),
                           ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: statusColor.withValues(alpha: 0.18),
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(color: statusColor.withValues(alpha: 0.45)),
-                            ),
-                            child: Text(
-                              status,
-                              style: TextStyle(
-                                color: statusColor,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
+                          SafetyBadge(assessment: safety, placeName: name),
                           const SizedBox(width: 4),
                           IconButton(
                             icon: Icon(
@@ -696,36 +594,44 @@ class _TrekDetailsState extends State<TrekDetails> {
                           ),
                         ),
                       if (showAlert)
-                        AnimatedOpacity(
-                          opacity: _alertVisible ? 1 : 0.28,
-                          duration: const Duration(milliseconds: 320),
-                          child: Container(
-                            margin: const EdgeInsets.only(top: 8, bottom: 8),
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                            decoration: BoxDecoration(
-                              color: Colors.redAccent.withValues(alpha: 0.2),
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border.all(color: Colors.redAccent.withValues(alpha: 0.7)),
-                            ),
-                            child: Row(
-                              children: [
-                                const Icon(
-                                  Icons.warning_amber_rounded,
-                                  color: Colors.redAccent,
-                                  size: 18,
-                                ),
-                                const SizedBox(width: 6),
-                                Expanded(
-                                  child: Text(
-                                    'ALERT: ${_alertReason(weather)}',
-                                    style: const TextStyle(
-                                      color: Colors.redAccent,
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 12,
+                        GestureDetector(
+                          onTap: () => showSafetyDetails(context, safety, placeName: name),
+                          child: AnimatedOpacity(
+                            opacity: (!safety.isDanger || _alertVisible) ? 1 : 0.28,
+                            duration: const Duration(milliseconds: 320),
+                            child: Container(
+                              margin: const EdgeInsets.only(top: 8, bottom: 8),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: safety.color.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(color: safety.color.withValues(alpha: 0.7)),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(safety.icon, color: safety.color, size: 18),
+                                  const SizedBox(width: 6),
+                                  Expanded(
+                                    child: Text(
+                                      '${safety.isDanger ? 'ALERT' : 'CAUTION'}: ${safety.summary}',
+                                      style: TextStyle(
+                                        color: safety.color,
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 12,
+                                      ),
                                     ),
                                   ),
-                                ),
-                              ],
+                                  if (safety.factors.length > 1)
+                                    Text(
+                                      '+${safety.factors.length - 1}',
+                                      style: TextStyle(
+                                        color: safety.color.withValues(alpha: 0.8),
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                ],
+                              ),
                             ),
                           ),
                         ),
@@ -831,7 +737,7 @@ class _TrekDetailsState extends State<TrekDetails> {
                                       ),
                                       const SizedBox(height: 8),
                                       Text(
-                                        'Rain: ${_rainPercentValue(weather)}%',
+                                        'Rain chance: ${_rainChanceLabel(weather)}',
                                         style: const TextStyle(
                                           color: Colors.white70,
                                           fontSize: 14,
