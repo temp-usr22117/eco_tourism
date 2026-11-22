@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:eco_tourism/services/weather_service.dart';
+import 'package:eco_tourism/services/safety_service.dart';
+import 'package:eco_tourism/widgets/safety_badge.dart';
 import 'package:eco_tourism/services/location_state_service.dart';
 
 class PlanTrekScreen extends StatefulWidget {
@@ -117,92 +119,14 @@ class _PlanTrekScreenState extends State<PlanTrekScreen> {
     return _toDouble(trail['lng']) ?? _toDouble(trail['longitude']);
   }
 
-  String _trailStatus(Map<String, dynamic> trail) {
-    return _normalizeStatus(
-      (trail['calculatedStatus'] ?? trail['baseStatus'] ?? 'UNKNOWN')
-          .toString()
-          .toUpperCase(),
-    );
+  SafetyAssessment _trailSafety(Map<String, dynamic> trail) {
+    final safety = trail['safety'];
+    return safety is SafetyAssessment ? safety : SafetyAssessment.unknown;
   }
 
   String _trailDifficulty(Map<String, dynamic> trail) {
-    // Use baseStatus from Firestore as requested.
+    // baseStatus in Firestore holds the trail's difficulty, not its safety.
     return (trail['baseStatus'] ?? 'UNKNOWN').toString().toUpperCase();
-  }
-
-  String _normalizeStatus(String status) {
-    if (status == 'CAUTION') return 'RISKY';
-    return status;
-  }
-
-  Color _statusColor(String status) {
-    if (status == 'DANGER') return Colors.redAccent;
-    if (status == 'RISKY') return Colors.amber;
-    return Colors.greenAccent;
-  }
-
-  String _statusFromWeather(Map<String, dynamic>? weather) {
-    if (weather == null) return 'UNKNOWN';
-
-    final temp = ((weather['main'] as Map?)?['temp'] as num?)?.toDouble();
-    final weatherList = weather['weather'];
-    final condition =
-        (weatherList is List && weatherList.isNotEmpty)
-            ? (weatherList.first['main'] ?? '').toString()
-            : '';
-
-    int rainPercent = 0;
-    final rain = weather['rain'];
-    if (rain is Map && rain['1h'] != null) {
-      final mm = (rain['1h'] as num?)?.toDouble() ?? 0;
-      rainPercent = (mm * 20).clamp(0, 100).round();
-    } else {
-      if (condition == 'Thunderstorm') rainPercent = 90;
-      if (condition == 'Rain') rainPercent = 70;
-      if (condition == 'Drizzle') rainPercent = 40;
-      if (condition == 'Snow') rainPercent = 75;
-
-      if (rainPercent == 0) {
-        final clouds = ((weather['clouds'] as Map?)?['all'] as num?)?.toInt();
-        if (clouds != null) {
-          rainPercent = clouds.clamp(0, 100);
-        }
-      }
-    }
-
-    var severity = 0; // 0=SAFE, 1=RISKY, 2=DANGER
-
-    // Temperature rule: >10 SAFE, >5 RISKY, <=5 DANGER.
-    if (temp != null) {
-      if (temp <= 5) {
-        severity = 2;
-      } else if (temp <= 10) {
-        severity = severity < 1 ? 1 : severity;
-      }
-    }
-
-    // Rain percentage contribution.
-    if (rainPercent >= 70) {
-      severity = 2;
-    } else if (rainPercent >= 40) {
-      severity = severity < 1 ? 1 : severity;
-    }
-
-    // Other weather condition contribution.
-    if (condition == 'Thunderstorm' || condition == 'Snow') {
-      severity = 2;
-    } else if (condition == 'Rain' ||
-        condition == 'Drizzle' ||
-        condition == 'Clouds' ||
-        condition == 'Mist' ||
-        condition == 'Fog' ||
-        condition == 'Haze') {
-      severity = severity < 1 ? 1 : severity;
-    }
-
-    if (severity == 2) return 'DANGER';
-    if (severity == 1) return 'RISKY';
-    return 'SAFE';
   }
 
   Future<Map<String, dynamic>> _enrichTrail(Map<String, dynamic> trail) async {
@@ -210,21 +134,15 @@ class _PlanTrekScreenState extends State<PlanTrekScreen> {
     final lng = _trailLng(trail);
 
     trail['calculatedDistanceKm'] = _calculatedDistanceFromCurrent(trail);
+    trail['safety'] = SafetyAssessment.unknown;
 
-    if (lat == null || lng == null) {
-      trail['calculatedStatus'] = _normalizeStatus(
-        (trail['baseStatus'] ?? 'UNKNOWN').toString().toUpperCase(),
-      );
-      return trail;
-    }
+    if (lat == null || lng == null) return trail;
 
     try {
-      final weather = await WeatherService().getWeather(lat, lng);
-      trail['calculatedStatus'] = _normalizeStatus(_statusFromWeather(weather));
+      final weather = await WeatherService().getTrailWeather(lat, lng);
+      trail['safety'] = SafetyService.assess(weather);
     } catch (_) {
-      trail['calculatedStatus'] = _normalizeStatus(
-        (trail['baseStatus'] ?? 'UNKNOWN').toString().toUpperCase(),
-      );
+      // Leave as UNKNOWN — never fall back to difficulty as a safety signal.
     }
     return trail;
   }
@@ -286,16 +204,14 @@ class _PlanTrekScreenState extends State<PlanTrekScreen> {
             return await _enrichTrail(trail);
           } catch (_) {
             trail['calculatedDistanceKm'] = null;
-            trail['calculatedStatus'] = _normalizeStatus(
-              (trail['baseStatus'] ?? 'UNKNOWN').toString().toUpperCase(),
-            );
+            trail['safety'] = SafetyAssessment.unknown;
             return trail;
           }
         }),
       );
 
       final filtered = enriched.where((trail) {
-        final status = _trailStatus(trail);
+        final status = _trailSafety(trail).label;
         final difficulty = _trailDifficulty(trail);
         final distance = (trail['calculatedDistanceKm'] as num?)?.toDouble();
 
@@ -308,7 +224,16 @@ class _PlanTrekScreenState extends State<PlanTrekScreen> {
         return statusOk && difficultyOk && distanceOk;
       }).toList();
 
+      // Safest first (SAFE → RISKY → DANGER → UNKNOWN), then most popular.
+      int safetyOrder(Map<String, dynamic> t) => switch (_trailSafety(t).level) {
+            SafetyLevel.safe => 0,
+            SafetyLevel.risky => 1,
+            SafetyLevel.danger => 2,
+            SafetyLevel.unknown => 3,
+          };
       filtered.sort((a, b) {
+        final bySafety = safetyOrder(a).compareTo(safetyOrder(b));
+        if (bySafety != 0) return bySafety;
         final countA = (a['checkInCount'] is num) ? (a['checkInCount'] as num).toInt() : 0;
         final countB = (b['checkInCount'] is num) ? (b['checkInCount'] as num).toInt() : 0;
         return countB.compareTo(countA);
@@ -442,10 +367,9 @@ class _PlanTrekScreenState extends State<PlanTrekScreen> {
               ),
             ..._suggestedTrails.map((trail) {
               final name = (trail['name'] ?? 'Unnamed Trail').toString();
-              final status = _trailStatus(trail);
+              final safety = _trailSafety(trail);
               final difficulty = _trailDifficulty(trail);
               final distance = (trail['calculatedDistanceKm'] as num?)?.toDouble();
-              final statusColor = _statusColor(status);
 
               return Container(
                 width: double.infinity,
@@ -471,23 +395,18 @@ class _PlanTrekScreenState extends State<PlanTrekScreen> {
                             ),
                           ),
                         ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                          decoration: BoxDecoration(
-                            color: statusColor.withValues(alpha: 0.18),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: statusColor.withValues(alpha: 0.45)),
-                          ),
-                          child: Text(
-                            status,
-                            style: TextStyle(
-                              color: statusColor,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
+                        SafetyBadge(assessment: safety, placeName: name, compact: true),
                       ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      safety.summary,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: safety.color.withValues(alpha: 0.9),
+                        fontSize: 12,
+                      ),
                     ),
                     const SizedBox(height: 10),
                     Row(

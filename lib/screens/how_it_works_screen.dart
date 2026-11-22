@@ -25,7 +25,7 @@ class _HowItWorksScreenState extends State<HowItWorksScreen> {
     },
     {
       'title': 'Safety Intelligence',
-      'subtitle': 'Get live status from temperature, rain percentage, and conditions.',
+      'subtitle': 'Live SAFE / RISKY / DANGER status from wind, rain, snow, cold, heat, visibility and the next 12 h of forecast — tap the badge to see why.',
       'icon': Icons.shield,
       'color': Color(0xFF00897B),
       'details': [

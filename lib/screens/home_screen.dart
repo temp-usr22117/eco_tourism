@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:eco_tourism/services/weather_service.dart';
+import 'package:eco_tourism/services/safety_service.dart';
+import 'package:eco_tourism/widgets/safety_badge.dart';
 import 'package:geolocator/geolocator.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
@@ -27,7 +29,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   /// Stores currently selected trail (null initially)
   Map<String, dynamic>? selectedTrail;
 
-  Map<String, dynamic>? weatherData;
+  TrailWeather? weatherData;
 
   LatLng? currentLocation;
 
@@ -98,93 +100,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     ) / 1000; // km
   }
 
-  String getSafetyStatus() {
-    if (weatherData == null) {
-      return selectedTrail?["baseStatus"] ?? "SAFE";
-    }
-
-    final temp = _temperatureValue(weatherData);
-    final rainPercent = _rainPercentValue(weatherData);
-    final condition = _conditionLabel(weatherData);
-
-    var severity = 0; // 0=SAFE, 1=RISKY, 2=DANGER
-
-    // Temperature rule: >10 SAFE, >5 RISKY, <=5 DANGER.
-    if (temp != null) {
-      if (temp <= 5) {
-        severity = 2;
-      } else if (temp <= 10) {
-        severity = severity < 1 ? 1 : severity;
-      }
-    }
-
-    // Rain percentage contribution.
-    if (rainPercent >= 70) {
-      severity = 2;
-    } else if (rainPercent >= 40) {
-      severity = severity < 1 ? 1 : severity;
-    }
-
-    // Other weather condition contribution.
-    if (condition == "Thunderstorm" || condition == "Snow") {
-      severity = 2;
-    } else if (condition == "Rain" ||
-        condition == "Drizzle" ||
-        condition == "Clouds" ||
-        condition == "Mist" ||
-        condition == "Fog" ||
-        condition == "Haze") {
-      severity = severity < 1 ? 1 : severity;
-    }
-
-    if (severity == 2) return "DANGER";
-    if (severity == 1) return "RISKY";
-    return "SAFE";
-  }
-
-  String _conditionLabel(Map<String, dynamic>? weather) {
-    if (weather == null) return '';
-    final weatherList = weather['weather'];
-    if (weatherList is List && weatherList.isNotEmpty) {
-      return (weatherList.first['main'] ?? '').toString();
-    }
-    return '';
-  }
-
-  double? _temperatureValue(Map<String, dynamic>? weather) {
-    if (weather == null) return null;
-    final main = weather['main'];
-    if (main is Map && main['temp'] != null) {
-      return (main['temp'] as num).toDouble();
-    }
-    return null;
-  }
-
-  int _rainPercentValue(Map<String, dynamic>? weather) {
-    if (weather == null) return 0;
-
-    final rain = weather['rain'];
-    if (rain is Map && rain['1h'] != null) {
-      final mm = (rain['1h'] as num).toDouble();
-      return (mm * 20).clamp(0, 100).round();
-    }
-
-    final weatherList = weather['weather'];
-    if (weatherList is List && weatherList.isNotEmpty) {
-      final condition = (weatherList.first['main'] ?? '').toString();
-      if (condition == 'Thunderstorm') return 90;
-      if (condition == 'Rain') return 70;
-      if (condition == 'Drizzle') return 40;
-      if (condition == 'Snow') return 75;
-    }
-
-    final clouds = weather['clouds'];
-    if (clouds is Map && clouds['all'] != null) {
-      return (clouds['all'] as num).round().clamp(0, 100);
-    }
-
-    return 0;
-  }
+  /// Unified safety verdict for the selected trail/location.
+  SafetyAssessment get _safety => SafetyService.assess(weatherData);
 
   @override
   void initState() {
@@ -430,11 +347,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   try {
                     await getPlaceName(point.latitude, point.longitude);
                     final weather = await WeatherService()
-                        .getWeather(point.latitude, point.longitude);
-
-                    final route = await _buildRouteTo(
-                      LatLng(point.latitude, point.longitude),
-                    );
+                        .getTrailWeather(point.latitude, point.longitude);
 
                     setState(() {
                       selectedTrail = {
@@ -442,6 +355,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         "lng": point.longitude,
                       };
                       weatherData = weather;
+                    });
+
+                    final route = await _buildRouteTo(
+                      LatLng(point.latitude, point.longitude),
+                    );
+
+                    setState(() {
                       routePoints = route;
                     });
 
@@ -536,18 +456,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                   ...data,
                                 };
                                   locationName = (data['name'] ?? 'Unknown Trail').toString();
+                                  weatherData = null;
                               });
 
                               try {
                                 final weather = await WeatherService()
-                                    .getWeather(data['lat'], data['lng']);
+                                    .getTrailWeather(data['lat'], data['lng']);
+                                // Show safety as soon as weather arrives,
+                                // even if routing later fails.
+                                setState(() {
+                                  weatherData = weather;
+                                });
 
                                 final route = await _buildRouteTo(
                                   LatLng(data['lat'], data['lng']),
                                 );
 
                                 setState(() {
-                                  weatherData = weather;
                                   routePoints = route;
                                 });
                               } catch (e) {
@@ -836,12 +761,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
                             try {
                               final weather = await WeatherService()
-                                  .getWeather(lat, lng);
+                                  .getTrailWeather(lat, lng);
+
+                              setState(() {
+                                weatherData = weather;
+                              });
 
                               final route = await _buildRouteTo(point);
 
                               setState(() {
-                                weatherData = weather;
                                 routePoints = route;
                               });
 
@@ -974,22 +902,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
                             /// 🌡 Temperature
                             Text(
-                              weatherData != null
-                                  ? "${weatherData!['main']['temp']}°C"
+                              weatherData?.temperatureC != null
+                                  ? "${weatherData!.temperatureC!.toStringAsFixed(1)}°C"
                                   : "--",
                               style: const TextStyle(color: Colors.white),
                             ),
 
-                            /// ⚠️ Safety Status (NEW LOGIC)
-                            Text(
-                              getSafetyStatus(),
-                              style: TextStyle(
-                                color: getSafetyStatus() == "SAFE"
-                                    ? Colors.green
-                                    : getSafetyStatus() == "RISKY"
-                                    ? Colors.yellow
-                                    : Colors.red,
-                              ),
+                            /// ⚠️ Safety Status (tap for reasons)
+                            SafetyBadge(
+                              assessment: _safety,
+                              placeName: locationName,
+                              compact: true,
                             ),
 
                             /// 📏 Distance
@@ -1004,6 +927,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             ),
                           ],
                         ),
+
+                        /// Why the verdict — top reason, tap for full breakdown
+                        if (weatherData != null) ...[
+                          const SizedBox(height: 6),
+                          GestureDetector(
+                            onTap: () => showSafetyDetails(
+                              context,
+                              _safety,
+                              placeName: locationName,
+                            ),
+                            child: Text(
+                              _safety.summary,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: _safety.color.withValues(alpha: 0.9),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ],
 
                         const SizedBox(height: 12),
 
